@@ -13,6 +13,7 @@ from livekit.agents import (
     function_tool,
     RunContext,
 )
+from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.plugins import openai
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -56,31 +57,56 @@ class VoiceAssistant(Agent):
     ) -> str:
         """
         Create a reminder (Todoist task).
-        - content: short task text, e.g. "Call John".
-        - due: natural language, e.g. "tomorrow 9am", "in 2 hours", or ISO date.
-        - project_id: optional Todoist project id.
-        - priority: 1..4 (4=highest).
-        Returns a human-readable confirmation.
+        - content: short task text (required, non-empty)
+        - due: natural language, e.g. "tomorrow 9am" or "in 2 hours"
+        - project_id: optional Todoist project id
+        - priority: 1..4 (4=highest)
         """
-        if not TODOIST_TOKEN:
-            raise RuntimeError("TODOIST_TOKEN not configured on server")
+        import os, requests
 
-        body = {"content": content, "priority": priority or 1}
-        if due:
-            body["due_string"] = due
-        if project_id:
-            body["project_id"] = project_id
+        token = os.environ.get("TODOIST_TOKEN")
+        assert token, "TODOIST_TOKEN not set"
 
-        r = requests.post(
-            "https://api.todoist.com/rest/v2/tasks",
-            headers={"Authorization": f"Bearer {TODOIST_TOKEN}",
-                     "Content-Type": "application/json"},
-            json=body,
-            timeout=10,
-        )
-        r.raise_for_status()
-        t = r.json()
-        return f"Created reminder: “{t.get('content')}” for {t.get('due', {}).get('string', 'no date')} (id {t.get('id')})."
+        # --- sanitize inputs ---
+        text = (content or "").strip()
+        if not text:
+            return "I need a task description (e.g., 'Call Alice')."
+
+        prio = priority or 1
+        if prio < 1: prio = 1
+        if prio > 4: prio = 4
+
+        body = {"content": text, "priority": prio}
+        if due and due.strip():
+            body["due_string"] = due.strip()
+        if project_id and str(project_id).strip():
+            body["project_id"] = str(project_id).strip()
+
+        try:
+            r = requests.post(
+                "https://api.todoist.com/rest/v2/tasks",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+                timeout=10,
+            )
+            if r.status_code >= 400:
+                # surface the server's explanation to logs + return concise message
+                try:
+                    err = r.json()
+                except Exception:
+                    err = {"error": r.text}
+                print(f"[todoist] create_reminder 400: payload={body} resp={err}")
+                return f"Todoist rejected the request: {err.get('error') or err}"
+            t = r.json()
+            when = (t.get("due") or {}).get("string", "no date")
+            return f"Created reminder: “{t.get('content')}” for {when} (id {t.get('id')})."
+        except requests.RequestException as e:
+            print(f"[todoist] create_reminder exception: {e}")
+            return f"Todoist error: {e}"
+
     @function_tool()
     async def list_reminders(
         self,
@@ -227,7 +253,11 @@ async def entrypoint(ctx: JobContext):
 
     # Start the session — this wires RoomIO so the agent will publish audio to the room
     print("[bridge] Starting voice assistant session...")
-    await session.start(agent=VoiceAssistant(), room=ctx.room)
+    await session.start(
+        agent=VoiceAssistant(),
+        room=ctx.room,
+        input=RoomInputOptions(close_on_disconnect=False),
+    )
 
     print("[bridge] 🤖 Voice assistant ready!")
     print("[bridge] 💬 Try saying: 'What time is it in Zurich?' or 'Hello'")
