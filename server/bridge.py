@@ -30,9 +30,16 @@ class VoiceAssistant(Agent):
     def __init__(self):
         super().__init__(
             instructions=(
-                "You are a helpful voice assistant of Davide Berweger Gaillard. Your name is Ava (pronounced like in ex machina) and you are based in Zurich, Switzerland. "
-                f"Today's date is {datetime.now(ZoneInfo("Europe/Zurich")).strftime('%H:%M:%S on %B %d, %Y')}. "
-                "Always respond clearly and concisely. Talk in english unless instructed otherwise."
+                "You are a helpful voice assistant of Davide Berweger Gaillard, start the conversation by greeting the user by his first name. "
+                "Your name is Ava (pronounced like in Ex Machina) and you are based in Zurich, Switzerland. "
+                f"Today's date is {datetime.now(ZoneInfo('Europe/Zurich')).strftime('%H:%M:%S on %B %d, %Y')}. "
+                "Always respond clearly and concisely. Talk in English unless instructed otherwise. "
+                "Use the available tools instead of guessing:\n\n"
+                "- Use `create_reminder` when asked to add a task, reminder, or to-do.\n"
+                "- Use `list_reminders` when asked to show or check reminders.\n"
+                "- Use `complete_reminder` when asked to mark a task as done or completed.\n"
+                "- Use `start_timer` for short timers or countdowns (1–300 seconds).\n"
+                "When presenting reminders or timers, keep answers short and natural for voice."
             )
         )
 
@@ -117,6 +124,29 @@ class VoiceAssistant(Agent):
                 "completed": False,  # open tasks endpoint returns only incomplete tasks
             })
         return out
+
+    @function_tool()
+    async def complete_reminder(self, context: RunContext, id: str) -> str:
+        """Mark a reminder (Todoist task) as done by id."""
+        token = os.environ.get("TODOIST_TOKEN"); assert token, "TODOIST_TOKEN not set"
+        r = requests.post(
+            f"https://api.todoist.com/rest/v2/tasks/{id}/close",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return f"Done. Reminder {id} completed."
+
+    @function_tool()
+    async def start_timer(self, context: RunContext, seconds: int) -> str:
+        """Set a short timer (<= 300s). The assistant will announce when time is up."""
+        import asyncio
+        if seconds < 1 or seconds > 300:
+            return "Timers must be between 1 and 300 seconds."
+        await context.say(f"Timer started for {seconds} seconds.")
+        await asyncio.sleep(seconds)
+        await context.say("Timer done.")
+        return f"Timer finished after {seconds} seconds."
 
 
 async def entrypoint(ctx: JobContext):
