@@ -36,5 +36,9 @@ def token():
 
     return jsonify({"token": token, "room": room})
 
+@app.get("/")
+def index():
+    return jsonify({"message": "Hello, World!"})
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8787)
