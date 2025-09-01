@@ -17,6 +17,7 @@ from livekit.plugins import openai
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import requests
+from openai import OpenAI
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ LIVEKIT_URL = os.environ["LIVEKIT_URL"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 ROOM_NAME = os.environ.get("ROOM_NAME", "demo-room")
 TODOIST_TOKEN = os.environ["TODOIST_TOKEN"]
+WEB_CLIENT = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ---------- Create the Agent class with function tools ----------
 class VoiceAssistant(Agent):
@@ -35,11 +37,11 @@ class VoiceAssistant(Agent):
                 f"Today's date is {datetime.now(ZoneInfo('Europe/Zurich')).strftime('%H:%M:%S on %B %d, %Y')}. "
                 "Always respond clearly and concisely. Talk in English unless instructed otherwise. "
                 "Use the available tools instead of guessing:\n\n"
-                "- Use `create_reminder` when asked to add a task, reminder, or to-do.\n"
-                "- Use `list_reminders` when asked to show or check reminders.\n"
-                "- Use `complete_reminder` when asked to mark a task as done or completed.\n"
-                "- Use `start_timer` for short timers or countdowns (1–300 seconds).\n"
-                "When presenting reminders or timers, keep answers short and natural for voice."
+                "- `create_reminder`: add tasks or reminders.\n"
+                "- `list_reminders`: show reminders.\n"
+                "- `complete_reminder`: mark tasks done.\n"
+                "- `start_timer`: short countdowns.\n"
+                "- `search_web`: when asked about news, current events, or general web info. Be as specific as possible."
             )
         )
 
@@ -147,6 +149,19 @@ class VoiceAssistant(Agent):
         await asyncio.sleep(seconds)
         await context.say("Timer done.")
         return f"Timer finished after {seconds} seconds."
+
+    @function_tool()
+    async def search_web(self, context: RunContext, query: str) -> str:
+        """
+        Search the web for real-time information using OpenAI's web search tool.
+        Returns a concise textual summary.
+        """
+        resp = WEB_CLIENT.responses.create(
+            model="gpt-5-mini",
+            tools=[{"type": "web_search"}],
+            input=query,
+        )
+        return resp.output_text
 
 
 async def entrypoint(ctx: JobContext):
