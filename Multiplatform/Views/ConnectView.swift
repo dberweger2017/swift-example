@@ -26,8 +26,7 @@ private struct TokenResponse: Codable {
 
 @MainActor
 private func fetchToken(identity: String, room: String) async throws -> String {
-    // ⬇️ your Mac's LAN IP & Flask port
-    let url = URL(string: "http://103.13.211.223:8787/token")!
+    let url = URL(string: "https://server.davideb.ch/token")!
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
