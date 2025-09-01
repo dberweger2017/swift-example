@@ -38,10 +38,10 @@ class VoiceAssistant(Agent):
                 "Always respond clearly and concisely. Talk in English unless instructed otherwise. "
                 "Use the available tools instead of guessing:\n\n"
                 "- `create_reminder`: add tasks or reminders.\n"
-                "- `list_reminders`: show reminders.\n"
+                "- `list_reminders`: show reminders. You can filter the reminders by using the following filters: today, overdue, tomorrow, no date, p1, p2, p3, p4, 7 days, next 7 days, 30 days, this week, next week, assigned to me, recurring, view all\n"
                 "- `complete_reminder`: mark tasks done.\n"
                 "- `start_timer`: short countdowns.\n"
-                "- `search_web`: when asked about news, current events, or general web info. Be as specific as possible."
+                "- `search_web`: when asked about news, current events, or general web info. Be as specific as possible. Never search the web unless the user asks you to. Before searching the web, alert the user that it might take a while."
             )
         )
 
@@ -159,7 +159,7 @@ class VoiceAssistant(Agent):
         resp = WEB_CLIENT.responses.create(
             model="gpt-5-mini",
             tools=[{"type": "web_search"}],
-            input=query,
+            input=f"Search the web for {query}",
         )
         return resp.output_text
 
