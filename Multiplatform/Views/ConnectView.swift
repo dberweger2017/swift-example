@@ -59,8 +59,7 @@ struct ConnectView: View {
                             .padding(.bottom, 10)
                         Text("SDK Version \(LiveKitSDK.version)")
                             .opacity(0.5)
-                        Text("Example App Version \(Bundle.main.appVersionLong) (\(Bundle.main.appBuild))")
-                            .opacity(0.5)
+                        Text("By Davide Berweger Gaillard")
                     }
 
                     VStack(spacing: 15) {

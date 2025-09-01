@@ -14,34 +14,109 @@ from livekit.agents import (
     RunContext,
 )
 from livekit.plugins import openai
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import requests
 
 load_dotenv()
 
 LIVEKIT_URL = os.environ["LIVEKIT_URL"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 ROOM_NAME = os.environ.get("ROOM_NAME", "demo-room")
+TODOIST_TOKEN = os.environ["TODOIST_TOKEN"]
 
 # ---------- Create the Agent class with function tools ----------
 class VoiceAssistant(Agent):
     def __init__(self):
         super().__init__(
             instructions=(
-                "You are a helpful voice assistant. "
-                "When asked about time in Zurich, use the get_time_in_zurich function. "
+                "You are a helpful voice assistant of Davide Berweger Gaillard. Your name is Ava (pronounced like in ex machina) and you are based in Zurich, Switzerland. "
+                f"Today's date is {datetime.now(ZoneInfo("Europe/Zurich")).strftime('%H:%M:%S on %B %d, %Y')}. "
                 "Always respond clearly and concisely. Talk in english unless instructed otherwise."
             )
         )
 
     @function_tool()
-    async def get_time_in_zurich(self, context: RunContext) -> str:
-        """Get the current time in Zurich, Switzerland"""
-        from datetime import datetime
-        from zoneinfo import ZoneInfo  # stdlib (no external deps)
+    async def create_reminder(
+        self,
+        context: RunContext,
+        content: str,
+        due: str | None = None,
+        project_id: str | None = None,
+        priority: int | None = 1,
+    ) -> str:
+        """
+        Create a reminder (Todoist task).
+        - content: short task text, e.g. "Call John".
+        - due: natural language, e.g. "tomorrow 9am", "in 2 hours", or ISO date.
+        - project_id: optional Todoist project id.
+        - priority: 1..4 (4=highest).
+        Returns a human-readable confirmation.
+        """
+        if not TODOIST_TOKEN:
+            raise RuntimeError("TODOIST_TOKEN not configured on server")
 
-        now = datetime.now(ZoneInfo("Europe/Zurich"))
-        result = f"The current time in Zurich is {now.strftime('%H:%M:%S on %B %d, %Y')}"
-        print(f"[tool] 🕐 get_time_in_zurich called, returning: {result}")
-        return result
+        body = {"content": content, "priority": priority or 1}
+        if due:
+            body["due_string"] = due
+        if project_id:
+            body["project_id"] = project_id
+
+        r = requests.post(
+            "https://api.todoist.com/rest/v2/tasks",
+            headers={"Authorization": f"Bearer {TODOIST_TOKEN}",
+                     "Content-Type": "application/json"},
+            json=body,
+            timeout=10,
+        )
+        r.raise_for_status()
+        t = r.json()
+        return f"Created reminder: “{t.get('content')}” for {t.get('due', {}).get('string', 'no date')} (id {t.get('id')})."
+    @function_tool()
+    async def list_reminders(
+        self,
+        context: RunContext,
+        project_id: str | None = None,
+        filter: str | None = "today | overdue | tomorrow",
+        limit: int | None = 10,
+    ) -> list[dict]:
+        """
+        List upcoming reminders (Todoist tasks) and return a compact JSON list.
+        - project_id: optional Todoist project id.
+        - filter: Todoist query filter (e.g. "today", "overdue", "7 days").
+        - limit: max tasks to return.
+        Returns a list of {id, content, due, project_id, priority, url, completed}.
+        """
+        if not TODOIST_TOKEN:
+            raise RuntimeError("TODOIST_TOKEN not configured on server")
+
+        # Todoist supports `?project_id=` and `?filter=`
+        params = {}
+        if project_id:
+            params["project_id"] = project_id
+        if filter:
+            params["filter"] = filter
+
+        r = requests.get(
+            "https://api.todoist.com/rest/v2/tasks",
+            headers={"Authorization": f"Bearer {TODOIST_TOKEN}"},
+            params=params,
+            timeout=10,
+        )
+        r.raise_for_status()
+        items = r.json()
+        out = []
+        for t in items[: (limit or 10)]:
+            out.append({
+                "id": t.get("id"),
+                "content": t.get("content"),
+                "due": (t.get("due") or {}).get("string"),
+                "project_id": t.get("project_id"),
+                "priority": t.get("priority"),
+                "url": t.get("url"),
+                "completed": False,  # open tasks endpoint returns only incomplete tasks
+            })
+        return out
 
 
 async def entrypoint(ctx: JobContext):
