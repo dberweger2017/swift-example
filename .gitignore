@@ -92,3 +92,7 @@ iOSInjectionProject/
 
 # Ignore license files
 *.license
+
+# Python
+*/.venv
+*/.env

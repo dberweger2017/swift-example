@@ -19,6 +19,30 @@ import LiveKit
 import SFSafeSymbols
 import SwiftUI
 
+private struct TokenResponse: Codable {
+    let token: String
+    let room: String
+}
+
+@MainActor
+private func fetchToken(identity: String, room: String) async throws -> String {
+    // ⬇️ your Mac's LAN IP & Flask port
+    let url = URL(string: "http://192.168.1.201:8787/token")!
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let body: [String: String] = [
+        "identity": identity,
+        "room": room
+    ]
+    req.httpBody = try JSONEncoder().encode(body)
+
+    let (data, _) = try await URLSession.shared.data(for: req)
+    let resp = try JSONDecoder().decode(TokenResponse.self, from: data)
+    return resp.token
+}
+
 struct ConnectView: View {
     @EnvironmentObject var appCtx: AppContext
     @EnvironmentObject var roomCtx: RoomContext
@@ -96,8 +120,23 @@ struct ConnectView: View {
 
                             LKButton(title: "Connect") {
                                 Task { @MainActor in
+                                    // 1) Fill the Server URL automatically (your LiveKit Cloud URL)
+                                    roomCtx.url = "wss://ios-x9elq3vl.livekit.cloud"
+
+                                    // 2) Obtain a fresh room token from your Flask server
+                                    let identity = UIDevice.current.identifierForVendor?.uuidString ?? "ios-user"
+                                    let token = try await fetchToken(identity: identity, room: "demo-room")
+
+                                    // 3) Stash token in the context (optional: shows up in UI)
+                                    roomCtx.token = token
+
+                                    // 4) Connect like normal using RoomContext’s helper
                                     let room = try await roomCtx.connect()
-                                    appCtx.connectionHistory.update(room: room, e2ee: roomCtx.isE2eeEnabled, e2eeKey: roomCtx.e2eeKey)
+                                    appCtx.connectionHistory.update(
+                                        room: room,
+                                        e2ee: roomCtx.isE2eeEnabled,
+                                        e2eeKey: roomCtx.e2eeKey
+                                    )
                                 }
                             }
 
