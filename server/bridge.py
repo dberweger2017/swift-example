@@ -256,7 +256,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=VoiceAssistant(),
         room=ctx.room,
-        input=RoomInputOptions(close_on_disconnect=False),
+        room_input_options=RoomInputOptions(close_on_disconnect=False),
     )
 
     print("[bridge] 🤖 Voice assistant ready!")
