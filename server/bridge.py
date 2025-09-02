@@ -46,16 +46,6 @@ class VoiceAssistant(Agent):
             )
         )
 
-    # Have Ava speak first the moment the session attaches to the room.
-    async def on_enter(self):
-        # You can hard-code a greeting or ask the LLM to craft one.
-        # Using generate_reply lets the model honor the instructions/persona.
-        await self.session.generate_reply(
-            instructions=(
-                "Greet Davide by first name as Ava from Zurich, then briefly offer help."
-            )
-        )
-
     @function_tool()
     async def create_reminder(
         self,
@@ -83,10 +73,8 @@ class VoiceAssistant(Agent):
             return "I need a task description (e.g., 'Call Alice')."
 
         prio = priority or 1
-        if prio < 1:
-            prio = 1
-        if prio > 4:
-            prio = 4
+        if prio < 1: prio = 1
+        if prio > 4: prio = 4
 
         body = {"content": text, "priority": prio}
         if due and due.strip():
@@ -137,6 +125,7 @@ class VoiceAssistant(Agent):
         if not TODOIST_TOKEN:
             raise RuntimeError("TODOIST_TOKEN not configured on server")
 
+        # Todoist supports `?project_id=` and `?filter=`
         params = {}
         if project_id:
             params["project_id"] = project_id
@@ -153,24 +142,21 @@ class VoiceAssistant(Agent):
         items = r.json()
         out = []
         for t in items[: (limit or 10)]:
-            out.append(
-                {
-                    "id": t.get("id"),
-                    "content": t.get("content"),
-                    "due": (t.get("due") or {}).get("string"),
-                    "project_id": t.get("project_id"),
-                    "priority": t.get("priority"),
-                    "url": t.get("url"),
-                    "completed": False,  # open tasks endpoint returns only incomplete tasks
-                }
-            )
+            out.append({
+                "id": t.get("id"),
+                "content": t.get("content"),
+                "due": (t.get("due") or {}).get("string"),
+                "project_id": t.get("project_id"),
+                "priority": t.get("priority"),
+                "url": t.get("url"),
+                "completed": False,  # open tasks endpoint returns only incomplete tasks
+            })
         return out
 
     @function_tool()
     async def complete_reminder(self, context: RunContext, id: str) -> str:
         """Mark a reminder (Todoist task) as done by id."""
-        token = os.environ.get("TODOIST_TOKEN")
-        assert token, "TODOIST_TOKEN not set"
+        token = os.environ.get("TODOIST_TOKEN"); assert token, "TODOIST_TOKEN not set"
         r = requests.post(
             f"https://api.todoist.com/rest/v2/tasks/{id}/close",
             headers={"Authorization": f"Bearer {token}"},
@@ -183,7 +169,6 @@ class VoiceAssistant(Agent):
     async def start_timer(self, context: RunContext, seconds: int) -> str:
         """Set a short timer (<= 300s). The assistant will announce when time is up."""
         import asyncio
-
         if seconds < 1 or seconds > 300:
             return "Timers must be between 1 and 300 seconds."
         await context.say(f"Timer started for {seconds} seconds.")
@@ -210,30 +195,13 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     print(f"[bridge] connected to room '{ctx.room.name}' as agent")
 
-    # ---------------- Room presence gate ----------------
-    # If no one is here yet, wait until someone joins before starting the agent session
-    someone_present = asyncio.Event()
-    if len(ctx.room.remote_participants) > 0:
-        someone_present.set()
-
-    @ctx.room.on("participant_connected")
-    def _on_participant_connected(p: rtc.RemoteParticipant):
-        print(f"[room] 👋 Participant joined: {p.identity}")
-        if not someone_present.is_set():
-            someone_present.set()
-
-    # Wait until a participant is present
-    if not someone_present.is_set():
-        print("[bridge] ⏳ Waiting for a participant to join before starting session...")
-        await someone_present.wait()
-
     # Create the agent session with OpenAI Realtime API
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(
             model="gpt-realtime",        # known-good realtime voice model
-            # model="gpt-4o-mini-realtime",
+            #model="gpt-4o-mini-realtime",
             voice="alloy",               # documented default voice
-            # voice="verse",
+            #voice="verse",
             api_key=OPENAI_API_KEY,
             temperature=0.7,
         ),
@@ -254,10 +222,12 @@ async def entrypoint(ctx: JobContext):
     def on_function_tools_executed(event):
         print("[agent] 🔧 Function tools executed!")
         for call, out in event.zipped():
+            # FunctionCallOutput fields: name, output, is_error, etc.
             print(f"[agent] 🔧 Tool '{call.name}' -> {out.output} (error={getattr(out, 'is_error', False)})")
 
     @session.on("speech_created")
     def on_speech_created(event):
+        # This indicates the model generated audio for playback to the room
         print(f"[agent] 🔊 Agent speech created (source: {event.source})")
 
     @session.on("agent_state_changed")
@@ -268,21 +238,25 @@ async def entrypoint(ctx: JobContext):
     def on_user_state_changed(event):
         print(f"[agent] 👤 User: {event.old_state} -> {event.new_state}")
 
-    # ---------------- Auto-shutdown when last participant leaves ----------------
-    @ctx.room.on("participant_disconnected")
-    async def _on_participant_disconnected(p: rtc.RemoteParticipant):
-        print(f"[room] 👋 Participant left: {p.identity}")
-        # If no remote participants left, close the session
-        if len(ctx.room.remote_participants) == 0:
-            print("[bridge] 📴 No participants left — closing agent session")
-            await session.aclose()
+    # ---------------- Room events (server ↔ participants) ----------------
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        print(f"[room] 👋 Participant joined: {participant.identity}")
 
-    # ---------------- Start the session (AI will speak first via on_enter) ------
+    @ctx.room.on("track_published")
+    def on_track_published(publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
+        print(f"[room] 📢 {participant.identity} published {publication.kind} track")
+
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
+        print(f"[room] 🎵 Subscribed to {publication.kind} from {participant.identity}")
+
+    # Start the session — this wires RoomIO so the agent will publish audio to the room
     print("[bridge] Starting voice assistant session...")
     await session.start(
         agent=VoiceAssistant(),
         room=ctx.room,
-        room_input_options=RoomInputOptions(close_on_disconnect=True),
+        room_input_options=RoomInputOptions(close_on_disconnect=False),
     )
 
     print("[bridge] 🤖 Voice assistant ready!")
